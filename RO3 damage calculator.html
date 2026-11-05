@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>RO3 damage calculator (reconstruction)</title>
+<style>
+:root{--bg:#eef1f5;--panel:#fff;--ink:#1b2230;--muted:#5b6475;--line:#d5dbe5;--field:#f6f8fb;--c:#1f6f8b;--w:#9a6200;--ok:#2b7a4b;--bad:#b3402f;color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#12161d;--panel:#1a202b;--ink:#e6eaf2;--muted:#9aa4b8;--line:#2b3445;--field:#141a24;--c:#5bb4d4;--w:#e0a93b;--ok:#62c28a;--bad:#ef7d6b;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#12161d;--panel:#1a202b;--ink:#e6eaf2;--muted:#9aa4b8;--line:#2b3445;--field:#141a24;--c:#5bb4d4;--w:#e0a93b;--ok:#62c28a;--bad:#ef7d6b;color-scheme:dark}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:1100px;margin:0 auto;padding:1.25rem 1rem 3rem}
+h1{font:600 1.75rem/1.2 "Iowan Old Style",Georgia,serif;margin:.1rem 0 .35rem}
+.lead{color:var(--muted);max-width:70ch;margin:0 0 1rem}
+.legend{display:flex;flex-wrap:wrap;gap:.4rem .9rem;font-size:.85rem;color:var(--muted);margin-bottom:1rem}
+.cols{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,.9fr);gap:1.25rem;align-items:start}
+@media (max-width:820px){.cols{grid-template-columns:1fr}}
+@media (min-width:821px){#res{position:sticky;top:calc(.75rem + env(safe-area-inset-top,0px))}}
+section,details.s{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:.85rem 1rem;margin-bottom:.8rem}
+h2,summary{font-size:1rem;font-weight:600;margin:0 0 .6rem}
+summary{cursor:pointer;margin:0}
+details[open] summary{margin-bottom:.6rem}
+.tag{font-size:.72rem;font-weight:500;border:1px solid currentColor;border-radius:99px;padding:0 .45rem;margin-left:.4rem;white-space:nowrap}
+.tag.client{color:var(--c)}.tag.emulator{color:var(--muted)}.tag.inferred{color:var(--w)}
+.g{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:.6rem}
+label{display:block;font-size:.85rem;color:var(--muted)}
+label small{display:block;font-size:.72rem;opacity:.85}
+input[type=number],select{width:100%;box-sizing:border-box;font:inherit;color:var(--ink);background:var(--field);border:1px solid var(--line);border-radius:6px;padding:.4rem .5rem;margin-top:.2rem}
+input:focus-visible,select:focus-visible,summary:focus-visible{outline:2px solid var(--c);outline-offset:2px}
+.chk{display:flex;gap:.5rem;align-items:center;margin-top:.7rem;color:var(--ink)}
+.chk input{width:auto;margin:0}
+.note{font-size:.82rem;color:var(--muted);margin:.5rem 0 0}
+table{width:100%;border-collapse:collapse;font-size:.88rem}
+th{font-weight:500;color:var(--muted);text-align:left;padding:.25rem .3rem;border-bottom:1px solid var(--line)}
+td{padding:.3rem;border-bottom:1px solid var(--line);vertical-align:top}
+td small{display:block;color:var(--muted);font-size:.72rem}
+td input{margin:0}
+.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.big{font:600 2rem/1.15 "Iowan Old Style",Georgia,serif;font-variant-numeric:tabular-nums}.two{display:grid;grid-template-columns:1fr 1fr;gap:.8rem}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:.6rem;margin:.7rem 0}
+.stats b{display:block;font-size:1.15rem;font-variant-numeric:tabular-nums}
+.stats span{font-size:.8rem;color:var(--muted)}
+.ok{color:var(--ok)}.bad{color:var(--bad)}
+.cmp{border-top:1px solid var(--line);margin-top:.7rem;padding-top:.6rem;font-size:.88rem}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>RO3 damage calculator</h1>
+<p class="lead">Stages and term names come from the game client’s protocol file. The arithmetic comes from the ro3emu server, which is itself inferred, so treat results as estimates and check them against real hits in the calibration box.</p>
+<div class="legend"><span><span class="tag client">client</span> term exists in the game’s own formula list</span><span><span class="tag emulator">emulator</span> arithmetic taken from ro3emu</span><span><span class="tag inferred">inferred</span> assumption, not confirmed</span></div>
+<div class="cols">
+<div id="left"></div>
+<div id="res"><section id="out"></section></div>
+</div>
+<p class="note">Every hit is assumed to land (HIT and FLEE are ignored), and the crit figure assumes a crit happens. Magic hits don’t normally crit in the emulator, so for spells read it as a reference only. Not modelled: job and PvP parameters, the damage cap, buff and talent adjusters, and tower-pet rules.</p>
+</div>
+<script>
+const $=id=>document.getElementById(id);
+const nv=id=>{const x=parseFloat($(id).value);return Number.isFinite(x)?x:0};
+const clamp=(x,a,b)=>Math.min(b,Math.max(a,x));
+const re=x=>{const f=Math.floor(x),d=x-f;return d<0.5?f:d>0.5?f+1:(f%2===0?f:f+1)};
+const fmt=n=>Number(n).toLocaleString("en",{maximumFractionDigits:2});
+const rg=(a,b)=>a===b?fmt(a):fmt(a)+"–"+fmt(b);
+const PAIRS=[["Race","ARaceAttr / BBeRaceAttr"],["Element damage","AElementDamageAttr / BBeElementDamageAttr"],["Bonus vs target element","AElementMonsterPercent / BBeElementMonsterPercent, only when the target’s element matches"],["Size (body)","ABodyAttr / BBeBodyAttr"],["Damage %","ADamagePercent / BBeDamagePercent"],["Physical or magic ATK %","AAtkDmgPer / AMAtkDmgPer and the Be… terms"],["Melee or ranged %","AMeleeDmgPer / BBeMeleeDmgPer"],["Skill damage %","ASkillDamagePercent / BBeSkillDamagePercent"],["PvE or PvP","APveDmg / BPveBeDmg"]];
+const I=(id,l,v,h)=>`<div><label for="${id}">${l}${h?`<small>${h}</small>`:""}</label><input id="${id}" type="number" inputmode="decimal" step="any" value="${v}"></div>`;
+const S=(t,tags,body)=>`<section><h2>${t}${tags.map(g=>`<span class="tag ${g}">${g}</span>`).join("")}</h2>${body}</section>`;
+$("left").innerHTML=
+S("Attacker",["client"],`<div class="g">${I("atk","ATK",5,"APhysicsAtk")}${I("matk","MATK",5,"AMagicAtk")}${I("lvl","Level",5,"your level, sets the DEF term")}</div>`)+
+S("Skill",["client","emulator"],`<div class="g"><div><label for="type">Damage type</label><select id="type"><option value="phys">Physical</option><option value="magic">Magic</option></select></div>${I("ratio","Skill modifier (%)",50,"_kDamageParam1 ÷ 100, per hit")}${I("flat","Flat damage",10,"_kDamageParam2")}${I("targets","Targets hit",1,"area skills split damage")}</div>`)+
+S("Defender",["client"],`<div class="g">${I("def","DEF",100,"BPhysicsDef")}${I("mdef","MDEF",100,"BMDef")}</div>`)+
+S("Defense",["client","emulator"],`<div class="g">${I("ignFlat","Ignore DEF, flat",0,"AIgnoreDef")}${I("ignPct","Ignore DEF (%)",0,"AIgnoreDefPercent")}</div><p class="note">DEF always applies: damage × (1 − DEF ÷ (DEF + 20 × your level)). Use the two ignore fields only if the attacker bypasses part of it.</p>`)+
+S("Element",["emulator"],`<div class="g">${I("elem","Net factor (%)",100,"from the element table, 100 = neutral")}</div>`)+
+S("Stat pairs",["client","inferred"],`<table><tr><th>Pair</th><th>Attacker deals (%)</th><th>Defender resists (%)</th></tr>${PAIRS.map((p,i)=>`<tr><td>${p[0]}<small>${p[1]}</small></td><td><input id="pa${i}" type="number" inputmode="decimal" step="any" value="0" aria-label="${p[0]} dealt"></td><td><input id="pb${i}" type="number" inputmode="decimal" step="any" value="0" aria-label="${p[0]} resisted"></td></tr>`).join("")}</table><p class="note">All rows are added into one multiplier: 1 + the sum of (dealt − resisted). Fitted to real hits, not confirmed.</p>`)+
+S("Critical hits",["emulator"],`<div class="g">${I("critBase","Base (%)",150,"FormulaParamCriDmg")}${I("critDealt","Bonus (%)",0,"CriticalDamage")}${I("critTaken","Resisted (%)",0,"BeCriticalDamage")}${I("critChance","Crit chance (%)",0,"from your panel, for the average")}</div>`)+
+`<details class="s"><summary>Constants <span class="tag emulator">emulator</span></summary><div class="g">${I("parDef","DEF constant",20,"ParDef × level")}${I("fLo","Fluctuation low (%)",97,"DamageFloat")}${I("fHi","Fluctuation high (%)",103)}${I("share","Target sharing",0.2,"inferred, per extra target")}</div></details>`+
+S("Calibrate",["inferred"],`<div class="g">${I("observed","Observed hit",0,"damage number seen in game")}</div><p class="note">Enter a normal or critical hit you saw with the stats above. The results panel says whether the calculator can produce it.</p>`);
+$("observed").value="";
+function read(){const v={};["atk","matk","ratio","flat","def","mdef","lvl","ignFlat","ignPct","elem","critBase","critDealt","critTaken","parDef","fLo","fHi","targets","share","critChance"].forEach(k=>v[k]=nv(k));v.type=$("type").value;v.mode="apply";v.pairs=PAIRS.map((_,i)=>[nv("pa"+i),nv("pb"+i)]);return v}
+function calc(v,mode){
+const magic=v.type==="magic",off=magic?v.matk:v.atk,st=[];
+let x=off;st.push(["Atk",(magic?"MATK ":"ATK ")+fmt(off),x]);
+x=off*v.ratio/100+v.flat;st.push(["Skill","× "+fmt(v.ratio)+"% + "+fmt(v.flat),x]);
+const def=magic?v.mdef:v.def;let note="not applied";
+if(mode==="apply"){const d=Math.max(0,(def-v.ignFlat)*(1-v.ignPct/100));const k=d>0?1-d/(d+v.parDef*Math.max(1,v.lvl)):1;x*=k;note="DEF "+fmt(d)+", × "+k.toFixed(4)}
+st.push(["Atk, defense",note,x]);
+const ef=clamp(v.elem/100,0.1,10);x*=ef;st.push(["Element","× "+ef.toFixed(3),x]);
+let sec=1;v.pairs.forEach(p=>{sec+=(p[0]-p[1])/100});sec=Math.max(0,sec);x*=sec;st.push(["Body, Race, Damage, PvE/PvP","× "+sec.toFixed(4),x]);
+const tg=Math.max(1,Math.round(v.targets)),sh=1/(1+v.share*(tg-1));x*=sh;st.push(["Damage sharing",tg+(tg>1?" targets":" target")+", × "+sh.toFixed(4),x]);
+const lo=x*v.fLo/100,hi=x*v.fHi/100,cm=Math.max(0,(v.critBase+v.critDealt-v.critTaken)/100);
+const r={st,x,lo,hi,cm,min:Math.max(1,re(lo)),max:Math.max(1,re(hi)),cmin:Math.max(1,re(lo*cm)),cmax:Math.max(1,re(hi*cm))};
+
+
+
+
+r.cc=clamp(v.critChance/100,0,1);r.avg=(1-r.cc)*Math.max(1,x)+r.cc*Math.max(1,x*cm);return r}
+function render(){
+const v=read(),a=calc(v,v.mode);
+const rows=a.st.map(s=>`<tr><td>${s[0]}</td><td>${s[1]}</td><td class="n">${fmt(s[2])}</td></tr>`).join("")+
+`<tr><td>Fluctuate</td><td>× ${v.fLo/100} to ${v.fHi/100}</td><td class="n">${fmt(a.lo)} to ${fmt(a.hi)}</td></tr>`+
+`<tr><td>Critical</td><td>× ${a.cm.toFixed(2)} on a crit</td><td class="n">${fmt(a.lo*a.cm)} to ${fmt(a.hi*a.cm)}</td></tr>`;
+let cal="";const obs=parseFloat($("observed").value);
+if(Number.isFinite(obs)){const fit=r=>(obs>=r.min&&obs<=r.max)||(obs>=r.cmin&&obs<=r.cmax);
+const B=a;
+const t=(r,n)=>`${n}: ${fit(r)?'<b class="ok">fits</b>':'<b class="bad">does not fit</b>'} (${r.min} to ${r.max}, crit ${r.cmin} to ${r.cmax})`;
+cal=`<div class="cmp"><b>Observed ${fmt(obs)}</b><br>${t(B,"Calculator result")}</div>`}
+$("out").innerHTML=`<h2>Result</h2><div class="two"><div><div class="big">${rg(a.min,a.max)}</div><span class="note">without crit</span></div><div><div class="big">${rg(a.cmin,a.cmax)}</div><span class="note">with crit (×${a.cm.toFixed(2)})</span></div></div>
+
+<div class="stats"><div><b>${fmt(Math.max(1,re(a.x)))}</b><span>average, no crit</span></div><div><b>${fmt(Math.max(1,re(a.x*a.cm)))}</b><span>average, crit</span></div><div><b>${fmt(a.avg)}</b><span>average at ${fmt(a.cc*100)}% crit chance</span></div></div>
+<table><tr><th>Stage</th><th>Step</th><th class="n">Value</th></tr>${rows}</table>
+${cal}`}
+const ROWS=[["ATK or MATK",100,v=>v.type==="magic"?v.matk:v.atk,(v,d)=>{if(v.type==="magic")v.matk+=d;else v.atk+=d}],["Damage bonus (points)",1,v=>v.pairs.reduce((s,p)=>s+p[0]-p[1],0),(v,d)=>{v.pairs[4][0]+=d}],["Crit damage (points)",1,v=>v.critBase+v.critDealt-v.critTaken,(v,d)=>{v.critDealt+=d}],["Crit chance (points)",1,v=>v.critChance,(v,d)=>{v.critChance+=d}],["Ignore DEF, flat",100,v=>v.ignFlat,(v,d)=>{v.ignFlat+=d}],["Ignore DEF (%)",1,v=>v.ignPct,(v,d)=>{v.ignPct+=d}],["Your level (DEF term only)",1,v=>v.lvl,(v,d)=>{v.lvl+=d}]];
+const up=document.createElement("section");up.id="up";
+up.innerHTML=`<h2>Upgrade comparison<span class="tag inferred">inferred</span></h2><table><tr><th>Stat</th><th>Step</th><th class="n">Per step (normal · crit · average)</th></tr>${ROWS.map((r,i)=>`<tr><td>${r[0]}</td><td><input id="st${i}" type="number" inputmode="decimal" step="any" value="${r[1]}" aria-label="${r[0]} step"></td><td class="n" id="ga${i}"></td></tr>`).join("")}</table><p class="note">Gains are on average damage before the random swing, using the inputs above. Steps are editable. Crit damage only changes crit hits, so enter your crit chance to see its value in the average column. Level changes only the DEF term here.</p>`;
+document.querySelector(".wrap").appendChild(up);
+const sg=x=>(x>=0?"+":"")+x.toFixed(2)+"%";
+function gain(v,a,i,d){const w=JSON.parse(JSON.stringify(v));ROWS[i][3](w,d);const b=calc(w,w.mode);return a.x>0&&a.cm>0?sg((b.x/a.x-1)*100)+" · "+sg((b.x*b.cm/(a.x*a.cm)-1)*100)+" · "+sg((b.avg/a.avg-1)*100):"–"}
+function upd(){const v=read(),a=calc(v,v.mode);ROWS.forEach((r,i)=>{const d=parseFloat($("st"+i).value)||0;$("ga"+i).textContent=gain(v,a,i,d)})}
+const go=()=>{render();upd()};
+document.addEventListener("input",go);go();
+</script>
+</body>
+</html>
